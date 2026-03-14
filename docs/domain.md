@@ -182,6 +182,15 @@ Resolution rules (applied by the use case, not the repository):
 - `start >= today - 92 days` → `forecast_only`
 - range spans the boundary → `both` (two API calls, results merged and sorted by timestamp)
 
+When the strategy is `both`, the use case must split the original query into two non-overlapping day-based subqueries because Open-Meteo filtering is date-based:
+
+- the boundary day (`today - 92 days` in the selected location timezone) belongs entirely to `forecast`
+- the `archive` subquery ends on the day **before** the boundary day
+- the `forecast` subquery starts on the boundary day
+- after clipping, any subquery with `start > end` is discarded instead of called
+
+This avoids duplicate buckets and missing data around the 92-day limit.
+
 The 92-day threshold is a named constant:
 
 ```typescript
@@ -193,6 +202,8 @@ const FORECAST_LOOKBACK_DAYS = 92
 - `daily`: compare the reading's local calendar day against today's local calendar day in the location timezone
 
 This decoupling means the chart correctly labels data regardless of which endpoint it came from.
+
+After fetching one or two endpoint results, the use case merges readings by timestamp, sorts ascending, and may deduplicate equal timestamps as a defensive safety net.
 
 ---
 

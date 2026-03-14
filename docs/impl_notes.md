@@ -126,6 +126,51 @@ if (strategy === 'both')          call both and merge
 
 **Comment to add:** The repository does not know about `FetchStrategy`. It accepts exactly one endpoint per invocation. The use case owns the orchestration.
 
+### Range splitting at the 92-day boundary
+
+Open-Meteo requests are day-based (`start_date`, `end_date`), so when a query spans the 92-day limit the split must also be day-based.
+
+Rule to implement:
+- the boundary day belongs entirely to `forecast`
+- `archive` ends on `boundaryDate - 1 day`
+- `forecast` starts on `boundaryDate`
+- empty subqueries after clipping are skipped
+
+Suggested helper:
+
+```typescript
+function splitQueryByEndpoint(query: WeatherQuery, boundaryDate: Date) {
+  const archiveQuery =
+    query.dateRange.start <= subDays(boundaryDate, 1)
+      ? {
+          ...query,
+          dateRange: {
+            start: query.dateRange.start,
+            end: minDate(query.dateRange.end, subDays(boundaryDate, 1)),
+          },
+        }
+      : null
+
+  const forecastQuery =
+    query.dateRange.end >= boundaryDate
+      ? {
+          ...query,
+          dateRange: {
+            start: maxDate(query.dateRange.start, boundaryDate),
+            end: query.dateRange.end,
+          },
+        }
+      : null
+
+  return {
+    archiveQuery,
+    forecastQuery,
+  }
+}
+```
+
+**Comment to add:** The boundary day is intentionally owned by `forecast`. This prevents overlap because the API range parameters are day-based, not timestamp-based.
+
 **Daily aggregation logic:**
 
 After receiving raw readings from the repository, the use case applies the aggregation method from `dailyAggregationByMetric`:
@@ -263,10 +308,17 @@ Render as two series on the same axis (e.g. solid line for historical, dashed fo
 | `validateWeatherQuery()` | Pure function | High — covers all invalid combinations |
 | `openmeteo/mapper` | Pure function | High — snapshot of raw response → RepositoryWeatherPoint[] |
 | `metricApiSpec` mapper | Pure function | High — verifies correct API variable names |
-| `GetWeatherSeriesUseCase` | Unit with mock repo | High — FetchStrategy, aggregation, DataKind assignment |
+| `GetWeatherSeriesUseCase` | Unit with mock repo | High — FetchStrategy, boundary split, aggregation, DataKind assignment |
 | `dailyAggregationByMetric` calculations | Pure logic | Medium |
 | `injectOrThrow` | Pure function | Low — simple guard |
 | Composables | Integration with Vue Test Utils | Low — covered implicitly by use case tests |
 | Components | Mount tests | Out of scope for this challenge |
 
 **Comment to add in each test file:** Each test file should have a one-line comment at the top stating what layer/contract it tests and why it can be tested in isolation. This makes the test structure legible to a reviewer scanning the repo.
+
+Boundary-specific tests worth keeping:
+- query entirely before the boundary → one `archive` call
+- query entirely from the boundary day onward → one `forecast` call
+- query spanning the boundary → two calls, clipped with no overlap
+- query ending exactly on `boundaryDate - 1 day` → archive only
+- query starting exactly on `boundaryDate` → forecast only

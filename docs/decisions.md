@@ -74,7 +74,9 @@ This means an hourly reading from earlier today is still `'historical'`, while a
 
 **Rationale:** The decision of which endpoint(s) to call is orchestration logic — it belongs in the use case. The repository's responsibility is to faithfully translate a query into an API call and map the response. Keeping the repository single-purpose makes it easier to test and reason about.
 
-**Consequence:** `FetchStrategy` remains a use-case concern only. For a date range that spans the 92-day boundary, the use case performs two repository calls, one with `'archive'` and one with `'forecast'`, then merges the resulting `RepositoryWeatherPoint` arrays, sorted by timestamp, before converting them into final `WeatherReading` values.
+**Boundary rule:** If the range spans the 92-day limit, the boundary day belongs entirely to the `forecast` endpoint. The `archive` subquery ends on the previous day. This keeps the split day-based, which matches Open-Meteo's `start_date` / `end_date` semantics, and avoids overlap.
+
+**Consequence:** `FetchStrategy` remains a use-case concern only. For a date range that spans the 92-day boundary, the use case performs two repository calls, one with `'archive'` and one with `'forecast'`, clips the subqueries so they do not overlap, then merges the resulting `RepositoryWeatherPoint` arrays, sorted by timestamp, before converting them into final `WeatherReading` values. A timestamp-level dedupe after merge is acceptable as a defensive safeguard.
 
 ---
 
