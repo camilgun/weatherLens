@@ -1,6 +1,6 @@
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Domain Model](docs/DOMAIN.md)
-- [Architectural Decisions](docs/DECISIONS.md)
-- [Implementation Notes](docs/IMPLEMENTATION_NOTES.md)
+- [Architecture](docs/architecture.md)
+- [Domain Model](docs/domain.md)
+- [Architectural Decisions](docs/decisions.md)
+- [Implementation Notes](docs/impl_notes.md)
