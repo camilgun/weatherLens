@@ -116,6 +116,16 @@ else                                       → 'both'
 
 **Comment to add:** `FORECAST_LOOKBACK_DAYS = 92` is a named constant because Open-Meteo's lookback window could change. It must not be a magic number.
 
+After resolving `FetchStrategy`, the use case maps it to one or two repository calls:
+
+```typescript
+if (strategy === 'archive_only')  call fetchPoints(query, 'archive')
+if (strategy === 'forecast_only') call fetchPoints(query, 'forecast')
+if (strategy === 'both')          call both and merge
+```
+
+**Comment to add:** The repository does not know about `FetchStrategy`. It accepts exactly one endpoint per invocation. The use case owns the orchestration.
+
 **Daily aggregation logic:**
 
 After receiving raw readings from the repository, the use case applies the aggregation method from `dailyAggregationByMetric`:

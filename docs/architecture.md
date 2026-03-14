@@ -101,7 +101,8 @@ src/
 
 3. GetWeatherSeriesUseCase
    → determines FetchStrategy from dateRange (see DOMAIN.md)
-   → calls IWeatherRepository.fetchPoints() once or twice
+   → maps the strategy to one or two WeatherEndpoint calls
+   → calls IWeatherRepository.fetchPoints(query, endpoint) once or twice
    → merges RepositoryWeatherPoint[] if strategy is 'both'
    → converts points into final WeatherReading[]
    → applies daily aggregation logic if interval === 'daily'
@@ -109,9 +110,10 @@ src/
    → returns Result<WeatherSeries, GetWeatherSeriesError>
 
 4. IWeatherRepository (OpenMeteoWeatherRepository)
+   → accepts one endpoint per invocation (`forecast` or `archive`)
    → builds API params from query (metric + interval → API variable names)
    → always passes query.location.timezone to Open-Meteo
-   → calls /forecast and/or /archive endpoint
+   → calls exactly one Open-Meteo endpoint
    → maps raw response to RepositoryWeatherPoint[] using the location timezone
    → returns Result<ReadonlyArray<RepositoryWeatherPoint>, WeatherRepositoryError>
 

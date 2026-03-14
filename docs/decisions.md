@@ -70,11 +70,11 @@ This means an hourly reading from earlier today is still `'historical'`, while a
 
 ## ADR-006: FetchStrategy is resolved by the use case, not the repository
 
-**Decision:** `GetWeatherSeriesUseCase` determines whether to call `/forecast`, `/archive`, or both. The repository executes a single endpoint call per invocation.
+**Decision:** `GetWeatherSeriesUseCase` determines whether the query needs `forecast`, `archive`, or both. `IWeatherRepository` does not accept `FetchStrategy`; it accepts a single `WeatherEndpoint` (`'forecast' | 'archive'`) and executes exactly one endpoint call per invocation.
 
 **Rationale:** The decision of which endpoint(s) to call is orchestration logic — it belongs in the use case. The repository's responsibility is to faithfully translate a query into an API call and map the response. Keeping the repository single-purpose makes it easier to test and reason about.
 
-**Consequence:** For a date range that spans the 92-day boundary, the use case calls the repository twice and merges the resulting `RepositoryWeatherPoint` arrays, sorted by timestamp, before converting them into final `WeatherReading` values.
+**Consequence:** `FetchStrategy` remains a use-case concern only. For a date range that spans the 92-day boundary, the use case performs two repository calls, one with `'archive'` and one with `'forecast'`, then merges the resulting `RepositoryWeatherPoint` arrays, sorted by timestamp, before converting them into final `WeatherReading` values.
 
 ---
 

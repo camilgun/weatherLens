@@ -171,6 +171,7 @@ The domain defines the concept; the use case resolves it.
 
 ```typescript
 type FetchStrategy = 'forecast_only' | 'archive_only' | 'both'
+type WeatherEndpoint = 'forecast' | 'archive'
 ```
 
 Resolution rules (applied by the use case, not the repository):
@@ -207,7 +208,7 @@ interface WeatherRepositoryError {
 interface IWeatherRepository {
   fetchPoints(
     query: WeatherQuery,
-    strategy: FetchStrategy
+    endpoint: WeatherEndpoint
   ): Promise<Result<ReadonlyArray<RepositoryWeatherPoint>, WeatherRepositoryError>>
 }
 ```
