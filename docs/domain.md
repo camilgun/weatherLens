@@ -132,7 +132,7 @@ const allowedUnitsByMetric: Record<WeatherMetric, WeatherUnit[]> = {
 ```
 
 Used by:
-- `validateWeatherQuery()` to reject invalid metric/unit combinations
+- `validateWeatherQuery(query, now)` to reject invalid metric/unit combinations
 - `WeatherConfig` component to dynamically render the unit selector options
 
 ### dailyAggregationByMetric
@@ -211,10 +211,25 @@ Use cases that depend on "today" or "current instant" receive `IClock` from the 
 
 ---
 
+## Result Boundary
+
+Domain interfaces use a project-local `Result<T, E>` facade rather than importing `option-t` helpers directly throughout the domain.
+
+```typescript
+// lib/result/index.ts
+export type { Result } from 'option-t'
+```
+
+This facade is introduced together with the repository/use-case interfaces so Task 2 can describe complete contracts without waiting for Task 5. Operational helpers such as `isErr` or unwrap functions can be added later where they are actually needed, but the `Result` type itself is part of the domain boundary from the start.
+
+---
+
 ## Repository Interfaces
 
 ```typescript
 // domain/repositories/IWeatherRepository.ts
+
+import type { Result } from '@/lib/result'
 
 interface WeatherRepositoryError {
   readonly kind: 'network' | 'parse' | 'invalid_query'
@@ -233,6 +248,8 @@ interface IWeatherRepository {
 ```typescript
 // domain/repositories/ILocationRepository.ts
 
+import type { Result } from '@/lib/result'
+
 interface LocationRepositoryError {
   readonly kind: 'not_found' | 'network'
   readonly message: string
@@ -250,6 +267,8 @@ interface ILocationRepository {
 ```typescript
 // domain/usecases/IGetWeatherSeriesUseCase.ts
 
+import type { Result } from '@/lib/result'
+
 interface GetWeatherSeriesError {
   readonly kind: 'repository' | 'invalid_query'
   readonly message: string
@@ -264,6 +283,8 @@ interface IGetWeatherSeriesUseCase {
 ```typescript
 // domain/usecases/ISearchLocationsUseCase.ts
 
+import type { Result } from '@/lib/result'
+
 interface ISearchLocationsUseCase {
   execute(query: string): Promise<Result<Location[], LocationRepositoryError>>
 }
@@ -275,6 +296,8 @@ interface ISearchLocationsUseCase {
 
 ```typescript
 // domain/usecases/validateWeatherQuery.ts
+
+import type { Result } from '@/lib/result'
 
 interface WeatherQueryValidationError {
   readonly kind: 'invalid_date_range' | 'invalid_unit_for_metric' | 'invalid_location'

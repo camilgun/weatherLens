@@ -60,7 +60,7 @@ src/
 ## Layer Rules
 
 ### `domain/`
-- Zero external dependencies (no Vue, no axios, no option-t internals beyond types)
+- Zero framework/infrastructure dependencies (no Vue, no axios). The domain may depend on the project-local `Result` facade for contract typing, but not on option-t helper APIs directly.
 - No `async` side effects — pure functions and type definitions only
 - Any use of "today" or "now" enters this layer either via a domain abstraction (`IClock`) or an explicit function argument
 - Everything else depends on this layer; this layer depends on nothing
@@ -126,6 +126,7 @@ src/
 6. WeatherDashboard
    → passes WeatherSeries to WeatherChart (ui/) and WeatherTable (ui/)
    → chart uses reading.kind to visually distinguish historical vs forecast
+   → chart and table format timestamps using WeatherSeries.query.location.timezone
 ```
 
 ---

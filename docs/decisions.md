@@ -38,7 +38,7 @@ Each entry records a decision, its rationale, the alternatives considered, and a
 
 **Rationale:** A generic `UnitForMetric<M extends WeatherMetric>` provides compile-time safety but is incompatible with Vue form state, which is always `string` at runtime. The form's `v-model` for the unit selector produces a `string`; casting it to a generic type at every boundary is noisy and error-prone.
 
-**Trade-off:** The type system cannot catch an invalid metric/unit combination at compile time. This is accepted because `validateWeatherQuery()` catches it at runtime before the query reaches the use case, and the form dynamically renders only valid unit options from `allowedUnitsByMetric`.
+**Trade-off:** The type system cannot catch an invalid metric/unit combination at compile time. This is accepted because `validateWeatherQuery(query, now)` catches it at runtime before the query reaches the use case, and the form dynamically renders only valid unit options from `allowedUnitsByMetric`.
 
 ---
 
@@ -94,7 +94,7 @@ This means an hourly reading from earlier today is still `'historical'`, while a
 
 **Decision:** All repository and use case methods return `Promise<Result<T, E>>`. Exceptions are never intentionally thrown across layer boundaries.
 
-**Rationale:** Explicit error types make failure modes visible at the call site. TypeScript can enforce that the caller handles both `Ok` and `Err` cases. This is more robust than try/catch chains and more expressive than `null` returns.
+**Rationale:** Explicit error types make failure modes visible at the call site. TypeScript can enforce that the caller handles both `Ok` and `Err` cases. This is more robust than try/catch chains and more expressive than `null` returns. The `Result` type boundary is introduced together with the domain contracts via a small local facade (`lib/result`) so the interfaces are complete from Task 2 onward, while helper functions can be added later where they are operationally needed.
 
 **Rule:** If an unexpected exception escapes a repository (e.g. network error not caught by the HTTP client), the composable boundary catches it and converts it to `Err` before exposing it to components. Components never see raw exceptions.
 

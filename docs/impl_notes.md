@@ -88,6 +88,8 @@ For daily:
 
 Important: these timestamps are expressed in the timezone requested from Open-Meteo. They must be parsed with the selected location's timezone, not with `new Date(rawString)` in the browser timezone.
 
+Parsing alone is not enough: every UI rendering of those timestamps must also use the same selected location timezone. If chart labels or table cells fall back to the browser timezone, daily buckets can appear shifted by one day for users viewing remote locations.
+
 The mapper zips `time[]` with value array(s) into `RepositoryWeatherPoint[]`.
 
 - Hourly metrics always produce one scalar `value`
@@ -95,6 +97,29 @@ The mapper zips `time[]` with value array(s) into `RepositoryWeatherPoint[]`.
 - If an endpoint ever needs multiple raw fields to derive that scalar, the normalization stays in infrastructure before creating the repository point
 
 **Comment to add in mapper:** The mapper applies provider-shape normalization only, including timezone-aware timestamp parsing. Domain decisions such as `DataKind` assignment stay in the use case.
+
+### Timestamp formatting in the UI
+
+`WeatherChart` and `WeatherTable` must not format `reading.timestamp` with browser-default locale helpers such as `toLocaleString()` or `Intl.DateTimeFormat` without `timeZone`.
+
+Create a shared formatter:
+
+```typescript
+function formatReadingTimestamp(
+  timestamp: Date,
+  aggregation: AggregationInterval,
+  timezone: string,
+  locale = 'en'
+): string
+```
+
+Rules:
+- `timezone` must always be `weatherSeries.query.location.timezone`
+- `hourly` formatting includes both date and time in that timezone
+- `daily` formatting renders the local calendar day in that timezone
+- chart labels and table cells must use the same formatter so they cannot drift apart
+
+**Comment to add in UI formatter:** Parsing and formatting must use the same location timezone. Otherwise the app can fetch the correct buckets but render the wrong local day to the user.
 
 ---
 
@@ -282,6 +307,30 @@ export class SentryErrorReporter implements IErrorReporter {
 
 ## components/
 
+### Form validation boundary
+
+`WeatherConfig` should use two validation layers with distinct responsibilities:
+
+- `WeatherConfigFormSchema` (Zod) validates raw form shape and coercion only: required fields, date parsing, and basic value presence
+- `validateWeatherQuery(query, now)` remains the single source of truth for domain/business rules: metric-unit compatibility, timezone requirement, location validity, and time-dependent date limits
+
+Recommended flow:
+
+```typescript
+const formResult = WeatherConfigFormSchema.safeParse(rawFormState)
+if (!formResult.success) {
+  // map Zod issues to field errors
+}
+
+const query = toWeatherQuery(formResult.data, selectedLocation)
+const domainResult = validateWeatherQuery(query, now)
+if (isErr(domainResult)) {
+  // map domain validation error to field error or form-level message
+}
+```
+
+**Comment to add in WeatherConfig:** Zod validates UI input shape; `validateWeatherQuery(query, now)` validates domain rules. Do not duplicate business rules in `superRefine()` or a second schema, or the two layers will drift.
+
 ### Aggregation disclaimer
 
 The `WeatherDashboard` or `WeatherChart` component must display a disclaimer when `query.interval === 'daily'`. The disclaimer text is derived from `dailyAggregationByMetric[query.metric]`:
@@ -295,6 +344,10 @@ const disclaimerByMethod: Record<DailyAggregationMethod, string> = {
 ```
 
 This map lives in the component layer (presentation concern), but it derives from the domain map. If a new metric is added to `dailyAggregationByMetric`, TypeScript will surface a missing key here.
+
+### Timestamp rendering rule
+
+`WeatherSeries.query.location.timezone` is the single source of truth for displaying timestamps in the UI. `WeatherChart` and `WeatherTable` should receive that timezone from the series/query context and pass it into the shared timestamp formatter.
 
 ### Chart: visual distinction historical vs forecast
 
@@ -313,7 +366,7 @@ Render as two series on the same axis (e.g. solid line for historical, dashed fo
 
 | Target | Type | Priority |
 |---|---|---|
-| `validateWeatherQuery()` | Pure function | High — covers all invalid combinations |
+| `validateWeatherQuery(query, now)` | Pure function | High — covers all invalid combinations |
 | `openmeteo/mapper` | Pure function | High — snapshot of raw response → RepositoryWeatherPoint[] |
 | `metricApiSpec` mapper | Pure function | High — verifies correct API variable names |
 | `GetWeatherSeriesUseCase` | Unit with mock repo | High — FetchStrategy, boundary split, aggregation, DataKind assignment |
@@ -332,3 +385,4 @@ Boundary-specific tests worth keeping:
 - query ending exactly on `boundaryDate` but starting before it → both
 - query starting exactly on `boundaryDate` → forecast only
 - same UTC instant with two different location timezones near midnight → potentially different `boundaryDate` and `todayLocalDay`
+- same `WeatherSeries` rendered in a browser timezone different from `query.location.timezone` → chart labels and table cells still show the location-local day/time
