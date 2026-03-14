@@ -67,6 +67,8 @@ interface WeatherQuery {
 
 `WeatherQuery` is the single input to the weather use case. It must be fully validated before being passed downstream — see Validation below.
 
+The date range is inclusive. `start` and `end` may refer to the same day, which represents a valid single-day query.
+
 ### RepositoryWeatherPoint
 
 ```typescript
@@ -270,7 +272,7 @@ function validateWeatherQuery(
 ```
 
 Validation rules:
-- `dateRange.start < dateRange.end`
+- `dateRange.start <= dateRange.end`
 - `dateRange.end <= today + 16 days` (Open-Meteo forecast limit)
 - `unit` is in `allowedUnitsByMetric[metric]`
 - `location.latitude` and `location.longitude` are finite numbers in valid range
