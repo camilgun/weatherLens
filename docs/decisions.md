@@ -44,7 +44,7 @@ Each entry records a decision, its rationale, the alternatives considered, and a
 
 ## ADR-004: Repository returns an intermediate weather-point model; use case produces the final reading model
 
-**Decision:** `WeatherReading.value` is always a single number in the final domain model, but the repository does not return `WeatherReading` directly. It returns `RepositoryWeatherPoint`, an intermediate domain type that is already normalized to a scalar `value`. Any endpoint-specific raw field asymmetry is resolved in infrastructure before the data crosses into the domain.
+**Decision:** `WeatherReading.value` is always a single number in the final domain model, but the repository does not return `WeatherReading` directly. It returns `RepositoryWeatherPoint`, an intermediate domain type that is already normalized to a scalar `value`. Any endpoint-specific raw field asymmetry is resolved in infrastructure before the data crosses into the domain, and `null` upstream values are rejected before a repository point is created.
 
 **Rationale:** The chart and table both need a scalar value per timestamp. At the same time, Open-Meteo endpoint details such as field naming or per-endpoint variable differences should not leak into the use case. `RepositoryWeatherPoint` keeps that normalization concern inside infrastructure while still preventing the repository from owning domain concerns like `DataKind`.
 
@@ -74,7 +74,7 @@ This means an hourly reading from earlier today is still `'historical'`, while a
 
 **Rationale:** The decision of which endpoint(s) to call is orchestration logic — it belongs in the use case. The repository's responsibility is to faithfully translate a query into an API call and map the response. Keeping the repository single-purpose makes it easier to test and reason about.
 
-**Boundary rule:** The 92-day boundary is computed from the current local calendar day in the selected location timezone, using an injected time source. If the range spans that limit, the boundary day belongs entirely to the `forecast` endpoint and the `archive` subquery ends on the previous day. This keeps the split day-based, which matches Open-Meteo's `start_date` / `end_date` semantics, and avoids overlap.
+**Boundary rule:** The 92-day boundary is computed from the current local calendar day in the selected location timezone, using an injected time source. `WeatherQuery.dateRange` is modeled as `LocalDate` (`YYYY-MM-DD`), not `Date`, so the split operates on location-local calendar days rather than browser-timezone instants. If the range spans that limit, the boundary day belongs entirely to the `forecast` endpoint and the `archive` subquery ends on the previous day. This keeps the split day-based, which matches Open-Meteo's `start_date` / `end_date` semantics, and avoids overlap.
 
 **Consequence:** `FetchStrategy` remains a use-case concern only. `archive_only` applies when `end < boundaryDay`; `forecast_only` applies when `start >= boundaryDay`; otherwise the use case performs two repository calls, one with `'archive'` and one with `'forecast'`, clips the subqueries so they do not overlap, then merges the resulting `RepositoryWeatherPoint` arrays, sorted by timestamp, before converting them into final `WeatherReading` values. A timestamp-level dedupe after merge is acceptable as a defensive safeguard.
 
@@ -82,11 +82,11 @@ This means an hourly reading from earlier today is still `'historical'`, while a
 
 ## ADR-007: IErrorReporter abstraction for error reporting
 
-**Decision:** An `IErrorReporter` interface abstracts error reporting. `ConsoleErrorReporter` is the default implementation. A stub `SentryErrorReporter` is included (not wired) to demonstrate the pattern.
+**Decision:** An `IErrorReporter` interface abstracts error reporting. `ConsoleErrorReporter` is the default implementation. A `SentryErrorReporter` adapter template is included (not wired) to demonstrate the pattern, but it degrades safely until Sentry is configured.
 
 **Rationale:** Error reporting is a cross-cutting infrastructure concern that should be swappable without touching business logic. Encoding `console.error` or Sentry calls directly in use cases or composables would violate the dependency rule and make testing noisier.
 
-**Current state:** `ConsoleErrorReporter` logs to console. `SentryErrorReporter` exists as a documented stub. The reporter is injected via `provide/inject` like other dependencies — replacing it in production requires one line change in `plugins/dependencies.ts`.
+**Current state:** `ConsoleErrorReporter` logs to console. `SentryErrorReporter` exists as a documented integration template with a `console.warn` fallback so it cannot mask the original application error if it is wired accidentally before Sentry setup is complete. The reporter is injected via `provide/inject` like other dependencies — replacing it in production requires one line change in `plugins/dependencies.ts`.
 
 ---
 

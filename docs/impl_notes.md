@@ -31,7 +31,7 @@ Unit parameter names also differ from each other:
 - `wind_speed_unit`: `kmh`, `ms`, `mph`, `kn`
 - Humidity has no unit parameter (always percent)
 
-**Comment to add in the mapper:** The mapper normalizes provider-specific field shapes into a scalar `RepositoryWeatherPoint.value`. It should not know about `DataKind`, fetch strategy, or current-time comparisons. If one endpoint ever needs multiple raw fields to produce the scalar, that normalization still belongs here, not in the domain model.
+**Comment to add in the mapper:** The mapper normalizes provider-specific field shapes into a scalar `RepositoryWeatherPoint.value`. It should not know about `DataKind`, fetch strategy, or current-time comparisons. If one endpoint ever needs multiple raw fields to produce the scalar, that normalization still belongs here, not in the domain model. A requested bucket with `null` is not a valid scalar and must fail fast as a typed repository error.
 
 ### Timezone handling
 
@@ -40,6 +40,7 @@ When `interval === 'daily'`, the API requires a `timezone` parameter. In this pr
 Rules:
 - `Location.timezone` comes from the Geocoding API and is stored in the domain model
 - Weather requests pass `timezone: query.location.timezone`
+- `start_date` / `end_date` are taken directly from `WeatherQuery.dateRange`, which is already modeled as `LocalDate` (`YYYY-MM-DD`)
 - Do not rely on the browser timezone
 - Avoid `timezone: 'auto'` in application code; an explicit timezone from the selected location is more deterministic and easier to test
 - Reuse the same location timezone when computing any rule that depends on "today" (92-day split, 16-day validation limit, `DataKind`)
@@ -65,13 +66,13 @@ endpoint: 'forecast', metric: 'relative_humidity_2m', interval: 'daily'
 
 ### Raw response shape
 
-The API returns timestamps as ISO strings in the `time` array, values in a parallel array keyed by variable name:
+The API returns timestamps as ISO strings in the `time` array, values in a parallel array keyed by variable name. Raw metric arrays must be modeled as `Array<number | null>` because Open-Meteo can return `null` for requested buckets outside the supported window instead of failing the HTTP request.
 
 ```json
 {
   "hourly": {
     "time": ["2024-01-01T00:00", "2024-01-01T01:00"],
-    "temperature_2m": [4.2, 3.8]
+    "temperature_2m": [4.2, null]
   }
 }
 ```
@@ -81,7 +82,7 @@ For daily:
 {
   "daily": {
     "time": ["2024-01-01", "2024-01-02"],
-    "temperature_2m_mean": [4.6, 3.05]
+    "temperature_2m_mean": [4.6, null]
   }
 }
 ```
@@ -95,8 +96,9 @@ The mapper zips `time[]` with value array(s) into `RepositoryWeatherPoint[]`.
 - Hourly metrics always produce one scalar `value`
 - Daily metrics for this challenge also produce one scalar `value` per timestamp
 - If an endpoint ever needs multiple raw fields to derive that scalar, the normalization stays in infrastructure before creating the repository point
+- If any requested value is `null`, the mapper/repository returns `Err({ kind: 'unexpected_null', ... })` with enough context (endpoint, metric, timestamp). Do not silently filter null buckets, because that hides boundary and query-validation bugs.
 
-**Comment to add in mapper:** The mapper applies provider-shape normalization only, including timezone-aware timestamp parsing. Domain decisions such as `DataKind` assignment stay in the use case.
+**Comment to add in mapper:** The mapper applies provider-shape normalization only, including timezone-aware timestamp parsing. Domain decisions such as `DataKind` assignment stay in the use case. Null provider values are rejected here so the use case only ever receives valid scalar repository points.
 
 ### Timestamp formatting in the UI
 
@@ -131,15 +133,15 @@ Rules:
 
 ```typescript
 const now = clock.now()
-const locationToday = getLocationToday(now, query.location.timezone)
-const boundaryDate = subDays(locationToday, FORECAST_LOOKBACK_DAYS) // 92 days
+const locationToday = getLocationTodayLocalDate(now, query.location.timezone)
+const boundaryDate = addLocalDays(locationToday, -FORECAST_LOOKBACK_DAYS)
 
-if (query.dateRange.end < boundaryDate)    → 'archive_only'
-if (query.dateRange.start >= boundaryDate) → 'forecast_only'
-else                                       → 'both'
+if (compareLocalDate(query.dateRange.end, boundaryDate) < 0)  → 'archive_only'
+if (compareLocalDate(query.dateRange.start, boundaryDate) >= 0) → 'forecast_only'
+else                                                            → 'both'
 ```
 
-`getLocationToday(now, timezone)` is a helper that returns the current calendar day in the selected location timezone. It must not use the browser/developer-machine timezone implicitly.
+`getLocationTodayLocalDate(now, timezone)` returns a `LocalDate` for the selected location. It must not use the browser/developer-machine timezone implicitly.
 
 **Comment to add:** `FORECAST_LOOKBACK_DAYS = 92` is a named constant because Open-Meteo's lookback window could change. It must not be a magic number, and it must be applied relative to the selected location's current day.
 
@@ -153,7 +155,7 @@ if (strategy === 'both')          call both and merge
 
 **Comment to add:** The repository does not know about `FetchStrategy`. It accepts exactly one endpoint per invocation. The use case owns the orchestration.
 
-**Validation note:** `validateWeatherQuery(query, now)` should reuse the same `getLocationToday(now, query.location.timezone)` helper to enforce the `today + 16 days` rule consistently with the fetch-boundary logic.
+**Validation note:** `validateWeatherQuery(query, now)` should reuse the same `getLocationTodayLocalDate(now, query.location.timezone)` helper to enforce the `today + 16 days` rule consistently with the fetch-boundary logic.
 
 ### Range splitting at the 92-day boundary
 
@@ -168,24 +170,26 @@ Rule to implement:
 Suggested helper:
 
 ```typescript
-function splitQueryByEndpoint(query: WeatherQuery, boundaryDate: Date) {
+function splitQueryByEndpoint(query: WeatherQuery, boundaryDate: LocalDate) {
+  const archiveEnd = addLocalDays(boundaryDate, -1)
+
   const archiveQuery =
-    query.dateRange.start <= subDays(boundaryDate, 1)
+    compareLocalDate(query.dateRange.start, archiveEnd) <= 0
       ? {
           ...query,
           dateRange: {
             start: query.dateRange.start,
-            end: minDate(query.dateRange.end, subDays(boundaryDate, 1)),
+            end: minLocalDate(query.dateRange.end, archiveEnd),
           },
         }
       : null
 
   const forecastQuery =
-    query.dateRange.end >= boundaryDate
+    compareLocalDate(query.dateRange.end, boundaryDate) >= 0
       ? {
           ...query,
           dateRange: {
-            start: maxDate(query.dateRange.start, boundaryDate),
+            start: maxLocalDate(query.dateRange.start, boundaryDate),
             end: query.dateRange.end,
           },
         }
@@ -198,7 +202,7 @@ function splitQueryByEndpoint(query: WeatherQuery, boundaryDate: Date) {
 }
 ```
 
-**Comment to add:** The boundary day is intentionally owned by `forecast`. This prevents overlap because the API range parameters are day-based, not timestamp-based.
+**Comment to add:** The boundary day is intentionally owned by `forecast`. This prevents overlap because the API range parameters are day-based, not timestamp-based. The split operates on `LocalDate`, not JS `Date`, so browser timezone cannot shift the requested day.
 
 **Daily value semantics:**
 
@@ -288,7 +292,7 @@ const { data, ...rest } = useQuery({
 
 ## lib/errorReporting/
 
-### SentryErrorReporter stub
+### SentryErrorReporter adapter template
 
 ```typescript
 // SentryErrorReporter.ts
@@ -297,11 +301,19 @@ const { data, ...rest } = useQuery({
 // then replace ConsoleErrorReporter with SentryErrorReporter in plugins/dependencies.ts.
 export class SentryErrorReporter implements IErrorReporter {
   report(error: unknown, context?: Record<string, unknown>): void {
+    // If Sentry is configured:
     // Sentry.captureException(error, { extra: context })
-    throw new Error('SentryErrorReporter is not yet configured')
+
+    // Safe fallback while the adapter is only documented but not wired.
+    console.warn('[SentryErrorReporter] Sentry not configured; falling back to console', {
+      error,
+      context,
+    })
   }
 }
 ```
+
+This adapter must never throw. Error reporting is observational infrastructure; if it fails, the original application error must remain the primary failure signal.
 
 ---
 
@@ -384,5 +396,6 @@ Boundary-specific tests worth keeping:
 - query ending exactly on `boundaryDate - 1 day` → archive only
 - query ending exactly on `boundaryDate` but starting before it → both
 - query starting exactly on `boundaryDate` → forecast only
+- provider payload contains `null` for a requested bucket → repository returns typed `unexpected_null` error
 - same UTC instant with two different location timezones near midnight → potentially different `boundaryDate` and `todayLocalDay`
 - same `WeatherSeries` rendered in a browser timezone different from `query.location.timezone` → chart labels and table cells still show the location-local day/time

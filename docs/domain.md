@@ -51,13 +51,15 @@ Rationale: a generic `UnitForMetric<M>` is elegant but incompatible with Vue for
 ### WeatherQuery
 
 ```typescript
+type LocalDate = string // YYYY-MM-DD in the selected location timezone
+
 type AggregationInterval = 'hourly' | 'daily'
 
 interface WeatherQuery {
   readonly location: Location
   readonly dateRange: {
-    readonly start: Date
-    readonly end: Date
+    readonly start: LocalDate
+    readonly end: LocalDate
   }
   readonly metric: WeatherMetric
   readonly unit: WeatherUnit
@@ -67,7 +69,11 @@ interface WeatherQuery {
 
 `WeatherQuery` is the single input to the weather use case. It must be fully validated before being passed downstream — see Validation below.
 
+`LocalDate` represents a calendar day in the selected location timezone, not an instant. This keeps query validation, API `start_date` / `end_date`, and the 92-day split aligned to the location's local day instead of the browser timezone.
+
 The date range is inclusive. `start` and `end` may refer to the same day, which represents a valid single-day query.
+
+UI components may temporarily use `Date` objects internally (for example a date picker), but the UI boundary must normalize them into `LocalDate` before assembling `WeatherQuery`. The domain never accepts ambient browser-timezone `Date` objects for the query range.
 
 ### RepositoryWeatherPoint
 
@@ -86,6 +92,8 @@ Purpose:
 - keeps endpoint-specific raw field shapes and naming quirks inside infrastructure
 - keeps `WeatherReading` clean and scalar for the chart and table
 - gives the use case a normalized boundary model that it can merge, sort, and classify without knowing provider details
+
+`RepositoryWeatherPoint.value` is always a concrete number. If the provider returns `null` for a requested bucket, infrastructure must not silently filter it and must not construct a repository point from it. Null handling is an explicit error case at the repository boundary.
 
 ### WeatherReading
 
@@ -167,14 +175,15 @@ type WeatherEndpoint = 'forecast' | 'archive'
 
 Resolution rules (applied by the use case, not the repository):
 
-- derive `boundaryDay` from the current local calendar day in `query.location.timezone`, using an injected clock
+- derive `boundaryDay` as a `LocalDate` from the current local calendar day in `query.location.timezone`, using an injected clock
+- compare query bounds using `LocalDate` helpers (or equivalent zero-padded ISO string comparison), never by converting the query range to ambient-timezone `Date`
 - `end < boundaryDay` → `archive_only`
 - `start >= boundaryDay` → `forecast_only`
 - otherwise → `both` (two API calls, results merged and sorted by timestamp)
 
 When the strategy is `both`, the use case must split the original query into two non-overlapping day-based subqueries because Open-Meteo filtering is date-based:
 
-- the boundary day (`today - 92 days` in the selected location timezone) belongs entirely to `forecast`
+- the boundary day (`today - 92 days` as a `LocalDate` in the selected location timezone) belongs entirely to `forecast`
 - the `archive` subquery ends on the day **before** the boundary day
 - the `forecast` subquery starts on the boundary day
 - after clipping, any subquery with `start > end` is discarded instead of called
@@ -207,7 +216,7 @@ interface IClock {
 }
 ```
 
-Use cases that depend on "today" or "current instant" receive `IClock` from the composition root. Pure domain helpers such as `validateWeatherQuery()` accept `now: Date` explicitly instead of reading global time.
+Use cases that depend on "today" or "current instant" receive `IClock` from the composition root. Pure domain helpers such as `validateWeatherQuery(query, now)` accept `now: Date` explicitly instead of reading global time.
 
 ---
 
@@ -232,7 +241,7 @@ This facade is introduced together with the repository/use-case interfaces so Ta
 import type { Result } from '@/lib/result'
 
 interface WeatherRepositoryError {
-  readonly kind: 'network' | 'parse' | 'invalid_query'
+  readonly kind: 'network' | 'parse' | 'invalid_query' | 'unexpected_null'
   readonly message: string
   readonly cause?: unknown
 }
@@ -312,7 +321,7 @@ function validateWeatherQuery(
 
 Validation rules:
 - `dateRange.start <= dateRange.end`
-- `dateRange.end <= locationToday(now, query.location.timezone) + 16 days` (Open-Meteo forecast limit, relative to the selected location's local day)
+- `dateRange.end <= locationToday(now, query.location.timezone) + 16 days` where `locationToday(...)` returns a `LocalDate` for the selected location
 - `unit` is in `allowedUnitsByMetric[metric]`
 - `location.latitude` and `location.longitude` are finite numbers in valid range
 - `location.timezone` is a non-empty IANA timezone string

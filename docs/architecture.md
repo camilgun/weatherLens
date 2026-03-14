@@ -96,6 +96,7 @@ src/
 
 ```
 1. User fills WeatherConfig form
+   → UI normalizes the selected calendar days into `LocalDate` (`YYYY-MM-DD`)
    → WeatherQuery domain entity assembled + validated
    → selected Location already carries an IANA timezone
 
@@ -118,6 +119,7 @@ src/
    → always passes query.location.timezone to Open-Meteo
    → calls exactly one Open-Meteo endpoint
    → normalizes raw response to scalar RepositoryWeatherPoint[] using the location timezone
+   → rejects unexpected `null` provider buckets as typed repository errors instead of filtering them
    → returns Result<ReadonlyArray<RepositoryWeatherPoint>, WeatherRepositoryError>
 
 5. Composable unwraps Result
