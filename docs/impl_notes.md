@@ -31,7 +31,7 @@ Unit parameter names also differ from each other:
 - `wind_speed_unit`: `kmh`, `ms`, `mph`, `kn`
 - Humidity has no unit parameter (always percent)
 
-**Comment to add in the mapper:** Explain why temperature daily uses two variables while humidity daily uses one. This is an API quirk, not a domain decision. The comment should make it clear to anyone reading the mapper that `mean_of_max_min` vs `mean` in `dailyAggregationByMetric` reflects this asymmetry.
+**Comment to add in the mapper:** Explain why temperature daily uses two variables while humidity daily uses one. This is an API quirk, not a domain decision. The comment should make it clear to anyone reading the mapper that `mean_of_max_min` vs `mean` in `dailyAggregationByMetric` reflects this asymmetry, and that the mapper preserves it in `RepositoryWeatherPoint.payload`.
 
 ### Daily requests require `timezone`
 
@@ -81,7 +81,13 @@ For daily:
 }
 ```
 
-The mapper zips `time[]` with value array(s) into `WeatherReading[]`. For temperature daily, the mapper produces the raw max/min pair; the use case computes `(max + min) / 2`.
+The mapper zips `time[]` with value array(s) into `RepositoryWeatherPoint[]`.
+
+- Hourly metrics always produce `payload: { kind: 'scalar', value }`
+- Daily precipitation / humidity / wind also produce scalar payloads
+- Daily temperature produces `payload: { kind: 'min_max', min, max }`
+
+For temperature daily, the mapper preserves the raw max/min pair inside one repository point; the use case computes `(max + min) / 2` later.
 
 **Comment to add in mapper:** The mapper does not apply business logic. It transforms shape only. The `(max + min) / 2` calculation happens in the use case, not here.
 
@@ -107,10 +113,10 @@ else                                       → 'both'
 
 After receiving raw readings from the repository, the use case applies the aggregation method from `dailyAggregationByMetric`:
 
-- `mean_of_max_min`: receives two readings per timestamp (max, min), produces one: `(max + min) / 2`
-- `sum`, `mean`, `max`: receives one reading per timestamp, passes value through
+- `mean_of_max_min`: receives one `RepositoryWeatherPoint` whose payload is `{ kind: 'min_max', min, max }`, produces one final `WeatherReading` with `(max + min) / 2`
+- `sum`, `mean`, `max`: receive one `RepositoryWeatherPoint` whose payload is `{ kind: 'scalar', value }`, and pass that scalar through into the final `WeatherReading`
 
-**Comment to add:** Explain that the use case is the only layer that knows about `dailyAggregationByMetric`. The repository produces raw values; the component receives final values. The transformation lives here by design.
+**Comment to add:** Explain that the use case is the only layer that knows about `dailyAggregationByMetric`. The repository produces `RepositoryWeatherPoint`; the component receives final `WeatherReading`. The transformation lives here by design.
 
 **DataKind assignment:**
 
@@ -233,7 +239,7 @@ Render as two series on the same axis (e.g. solid line for historical, dashed fo
 | Target | Type | Priority |
 |---|---|---|
 | `validateWeatherQuery()` | Pure function | High — covers all invalid combinations |
-| `openmeteo/mapper` | Pure function | High — snapshot of raw response → WeatherReading[] |
+| `openmeteo/mapper` | Pure function | High — snapshot of raw response → RepositoryWeatherPoint[] |
 | `metricApiSpec` mapper | Pure function | High — verifies correct API variable names |
 | `GetWeatherSeriesUseCase` | Unit with mock repo | High — FetchStrategy, aggregation, DataKind assignment |
 | `dailyAggregationByMetric` calculations | Pure logic | Medium |

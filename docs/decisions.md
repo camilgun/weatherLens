@@ -42,15 +42,15 @@ Each entry records a decision, its rationale, the alternatives considered, and a
 
 ---
 
-## ADR-004: Daily aggregation produces a single value per day
+## ADR-004: Repository returns an intermediate weather-point model; use case produces the final reading model
 
-**Decision:** `WeatherReading.value` is always a single number. For daily interval, the use case computes one representative value per day using the method defined in `dailyAggregationByMetric`.
+**Decision:** `WeatherReading.value` is always a single number in the final domain model, but the repository does not return `WeatherReading` directly. It returns `RepositoryWeatherPoint`, an intermediate domain type whose payload can be either a scalar or a `{ min, max }` pair. The use case converts those points into final `WeatherReading` values using `dailyAggregationByMetric`.
 
-**Rationale:** The chart and table both need a scalar value per timestamp. Exposing `maxValue`/`minValue` on `WeatherReading` would leak API structure into the domain and complicate every downstream consumer.
+**Rationale:** The chart and table both need a scalar value per timestamp. At the same time, Open-Meteo's daily temperature response provides `max` and `min`, not a mean. An intermediate repository boundary type preserves that asymmetry without leaking raw API JSON upward and without polluting `WeatherReading` with provider-specific fields.
 
-**Alternative considered:** Add `secondaryValue?: number` to support max/min range display. Rejected because it requires special-casing in both chart and table, and the chart library (Chart.js or similar) would need explicit range-band configuration. Out of scope for this challenge; can be added later.
+**Alternative considered:** Add `secondaryValue?: number` or `minValue` / `maxValue` directly to `WeatherReading`. Rejected because it requires special-casing in both chart and table and turns the final UI-facing model into a transport shape rather than a clean domain reading.
 
-**Trade-off:** The daily temperature value (mean of max/min) is an approximation. This is communicated to the user via a UI disclaimer derived from `dailyAggregationByMetric`. The domain carries the label; the component renders it.
+**Trade-off:** The repository/use-case boundary becomes one step more explicit. This adds a small amount of type surface area, but it removes an architectural contradiction: the mapper stays shape-only, while the use case remains the place where daily aggregation semantics live. The daily temperature value (mean of max/min) is still an approximation and is communicated to the user via a UI disclaimer derived from `dailyAggregationByMetric`.
 
 ---
 
@@ -70,7 +70,7 @@ Each entry records a decision, its rationale, the alternatives considered, and a
 
 **Rationale:** The decision of which endpoint(s) to call is orchestration logic — it belongs in the use case. The repository's responsibility is to faithfully translate a query into an API call and map the response. Keeping the repository single-purpose makes it easier to test and reason about.
 
-**Consequence:** For a date range that spans the 92-day boundary, the use case calls the repository twice and merges the resulting `WeatherReading` arrays, sorted by timestamp.
+**Consequence:** For a date range that spans the 92-day boundary, the use case calls the repository twice and merges the resulting `RepositoryWeatherPoint` arrays, sorted by timestamp, before converting them into final `WeatherReading` values.
 
 ---
 

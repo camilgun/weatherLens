@@ -64,6 +64,35 @@ interface WeatherQuery {
 
 `WeatherQuery` is the single input to the weather use case. It must be fully validated before being passed downstream — see Validation below.
 
+### RepositoryWeatherPoint
+
+```typescript
+type RepositoryWeatherPayload =
+  | {
+      readonly kind: 'scalar'
+      readonly value: number
+    }
+  | {
+      readonly kind: 'min_max'
+      readonly min: number
+      readonly max: number
+    }
+
+interface RepositoryWeatherPoint {
+  readonly timestamp: Date
+  readonly unit: WeatherUnit
+  readonly aggregation: AggregationInterval
+  readonly payload: RepositoryWeatherPayload
+}
+```
+
+`RepositoryWeatherPoint` is the repository-to-use-case boundary type. It is still a domain type, but it is not the final UI-ready reading model.
+
+Purpose:
+- lets the repository preserve Open-Meteo's daily temperature asymmetry (`max` + `min`) without leaking raw API JSON upward
+- keeps `WeatherReading` clean and scalar for the chart and table
+- makes it explicit that daily aggregation is a use-case responsibility, not mapper logic
+
 ### WeatherReading
 
 ```typescript
@@ -71,14 +100,14 @@ type DataKind = 'historical' | 'forecast'
 
 interface WeatherReading {
   readonly timestamp: Date
-  readonly value: number        // always a single computed value — see Aggregation below
+  readonly value: number        // final scalar value used by chart and table
   readonly unit: WeatherUnit
   readonly kind: DataKind
   readonly aggregation: AggregationInterval
 }
 ```
 
-`DataKind` is a UI concern surfaced to the domain deliberately: the chart needs to visually distinguish historical from forecast data, and this is not an infrastructure detail.
+`WeatherReading` is the final normalized domain model exposed by the use case. `DataKind` is a UI concern surfaced to the domain deliberately: the chart needs to visually distinguish historical from forecast data, and this is not an infrastructure detail.
 
 ### WeatherSeries
 
@@ -126,10 +155,10 @@ const dailyAggregationByMetric: Record<WeatherMetric, DailyAggregationMethod> = 
 ```
 
 Used by:
-- `GetWeatherSeriesUseCase` to compute `WeatherReading.value` for daily interval
+- `GetWeatherSeriesUseCase` to convert `RepositoryWeatherPoint` into final `WeatherReading` for daily interval
 - UI components to render the correct aggregation disclaimer (e.g. "Daily values represent mean of max/min temperatures")
 
-**Important distinction:** `temperature_2m` daily is computed by the use case from two API values (`max` and `min`). `relative_humidity_2m` daily is a direct API value (`_mean` variable). The `DailyAggregationMethod` reflects the *semantic* meaning in both cases — the difference in origin is an infrastructure detail documented in IMPLEMENTATION_NOTES.md.
+**Important distinction:** `temperature_2m` daily is computed by the use case from a repository payload containing `max` and `min`. `relative_humidity_2m` daily is a direct scalar payload (`_mean` variable). The `DailyAggregationMethod` reflects the *semantic* meaning in both cases — the difference in payload shape is documented in IMPLEMENTATION_NOTES.md.
 
 ---
 
@@ -173,10 +202,10 @@ interface WeatherRepositoryError {
 }
 
 interface IWeatherRepository {
-  fetchSeries(
+  fetchPoints(
     query: WeatherQuery,
     strategy: FetchStrategy
-  ): Promise<Result<WeatherSeries, WeatherRepositoryError>>
+  ): Promise<Result<ReadonlyArray<RepositoryWeatherPoint>, WeatherRepositoryError>>
 }
 ```
 

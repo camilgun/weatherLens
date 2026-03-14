@@ -2,14 +2,14 @@
 
 ## Overview
 
-Single-page application built with Vue 3. The codebase is organized in concentric layers: **domain** at the center (no dependencies), **infrastructure** and **application** around it, **composables** as the boundary into Vue, and **components** at the outermost edge.
+Single-page application built with Vue 3. The codebase is organized in concentric layers: **domain** at the center (no dependencies), **infrastructure** around it, **composables** as the boundary into Vue, and **components** at the outermost edge.
 
 Data flows in one direction:
 
 ```
 Open-Meteo API
   → infrastructure/api (raw response)
-  → infrastructure/repositories (mapped to domain entities)
+  → infrastructure/repositories (mapped to repository boundary entities)
   → domain/usecases (business logic applied)
   → composables (TanStack Query + Vue reactivity)
   → components (pure presentation)
@@ -100,16 +100,17 @@ src/
 
 3. GetWeatherSeriesUseCase
    → determines FetchStrategy from dateRange (see DOMAIN.md)
-   → calls IWeatherRepository.fetchSeries() once or twice
-   → merges results if strategy is 'both'
+   → calls IWeatherRepository.fetchPoints() once or twice
+   → merges RepositoryWeatherPoint[] if strategy is 'both'
+   → converts points into final WeatherReading[]
    → applies daily aggregation logic if interval === 'daily'
-   → returns Result<WeatherSeries, WeatherRepositoryError>
+   → returns Result<WeatherSeries, GetWeatherSeriesError>
 
 4. IWeatherRepository (OpenMeteoWeatherRepository)
    → builds API params from query (metric + interval → API variable names)
    → calls /forecast and/or /archive endpoint
-   → maps raw response to WeatherReading[]
-   → returns Result<WeatherSeries, WeatherRepositoryError>
+   → maps raw response to RepositoryWeatherPoint[]
+   → returns Result<ReadonlyArray<RepositoryWeatherPoint>, WeatherRepositoryError>
 
 5. Composable unwraps Result
    → exposes { data, isLoading, error } to components
@@ -149,8 +150,8 @@ This makes every use case swappable in tests by calling `app.provide()` with a m
 All async operations return `Result<OkValue, ErrorValue>` (option-t).
 
 ```
-Repository         → returns Result<WeatherSeries, WeatherRepositoryError>
-UseCase            → propagates or transforms Result
+Repository         → returns Result<RepositoryWeatherPoint[], WeatherRepositoryError>
+UseCase            → transforms points into WeatherSeries
 Composable         → unwraps Result:
                        Ok  → sets TanStack Query data
                        Err → calls IErrorReporter.report() + exposes typed error to component
