@@ -44,13 +44,13 @@ Each entry records a decision, its rationale, the alternatives considered, and a
 
 ## ADR-004: Repository returns an intermediate weather-point model; use case produces the final reading model
 
-**Decision:** `WeatherReading.value` is always a single number in the final domain model, but the repository does not return `WeatherReading` directly. It returns `RepositoryWeatherPoint`, an intermediate domain type whose payload can be either a scalar or a `{ min, max }` pair. The use case converts those points into final `WeatherReading` values using `dailyAggregationByMetric`.
+**Decision:** `WeatherReading.value` is always a single number in the final domain model, but the repository does not return `WeatherReading` directly. It returns `RepositoryWeatherPoint`, an intermediate domain type that is already normalized to a scalar `value`. Any endpoint-specific raw field asymmetry is resolved in infrastructure before the data crosses into the domain.
 
-**Rationale:** The chart and table both need a scalar value per timestamp. At the same time, Open-Meteo's daily temperature response provides `max` and `min`, not a mean. An intermediate repository boundary type preserves that asymmetry without leaking raw API JSON upward and without polluting `WeatherReading` with provider-specific fields.
+**Rationale:** The chart and table both need a scalar value per timestamp. At the same time, Open-Meteo endpoint details such as field naming or per-endpoint variable differences should not leak into the use case. `RepositoryWeatherPoint` keeps that normalization concern inside infrastructure while still preventing the repository from owning domain concerns like `DataKind`.
 
-**Alternative considered:** Add `secondaryValue?: number` or `minValue` / `maxValue` directly to `WeatherReading`. Rejected because it requires special-casing in both chart and table and turns the final UI-facing model into a transport shape rather than a clean domain reading.
+**Alternative considered:** Return `WeatherReading` directly from the repository. Rejected because that would force the repository to know about current-time semantics and assign `historical` vs `forecast`, which belongs in the use case.
 
-**Trade-off:** The repository/use-case boundary becomes one step more explicit. This adds a small amount of type surface area, but it removes an architectural contradiction: the mapper stays shape-only, while the use case remains the place where daily aggregation semantics live. The daily temperature value (mean of max/min) is still an approximation and is communicated to the user via a UI disclaimer derived from `dailyAggregationByMetric`.
+**Trade-off:** The repository/use-case boundary becomes one step more explicit. This adds a small amount of type surface area, but it keeps provider normalization localized and leaves the use case focused on orchestration: fetch strategy resolution, merging, sorting, and `DataKind` assignment.
 
 ---
 

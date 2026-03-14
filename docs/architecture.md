@@ -70,7 +70,7 @@ src/
 ### `domain/usecases/`
 - Interfaces live here alongside implementations (pragmatic collapsing of domain/application layers — see DECISIONS.md)
 - Depend on repository interfaces, never on concrete implementations
-- Apply business logic: daily aggregation calculations, fetch strategy resolution, data merging
+- Apply business logic: fetch strategy resolution, data merging, final series assembly, and `DataKind` assignment
 
 ### `composables/`
 - The only layer allowed to use Vue APIs (`inject`, `ref`, `computed`) and TanStack Query
@@ -104,17 +104,16 @@ src/
    → maps the strategy to one or two WeatherEndpoint calls
    → calls IWeatherRepository.fetchPoints(query, endpoint) once or twice
    → merges RepositoryWeatherPoint[] if strategy is 'both'
-   → converts points into final WeatherReading[]
-   → applies daily aggregation logic if interval === 'daily'
+   → converts normalized points into final WeatherReading[]
    → assigns DataKind using location-local time
    → returns Result<WeatherSeries, GetWeatherSeriesError>
 
 4. IWeatherRepository (OpenMeteoWeatherRepository)
    → accepts one endpoint per invocation (`forecast` or `archive`)
-   → builds API params from query (metric + interval → API variable names)
+   → builds API params from query (`endpoint` + `metric` + `interval` → API variable names)
    → always passes query.location.timezone to Open-Meteo
    → calls exactly one Open-Meteo endpoint
-   → maps raw response to RepositoryWeatherPoint[] using the location timezone
+   → normalizes raw response to scalar RepositoryWeatherPoint[] using the location timezone
    → returns Result<ReadonlyArray<RepositoryWeatherPoint>, WeatherRepositoryError>
 
 5. Composable unwraps Result

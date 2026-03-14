@@ -16,11 +16,11 @@ Both accept the same core parameters but differ in available variables (see belo
 
 ### API parameter naming — must match exactly
 
-These are the correct Open-Meteo parameter names. They differ from the domain entity names and are easy to get wrong:
+These are the canonical Open-Meteo parameter names for the metrics chosen in this challenge. They differ from the domain entity names and are easy to get wrong:
 
 | Domain concept | API parameter (hourly) | API parameter (daily) |
 |---|---|---|
-| `temperature_2m` | `temperature_2m` | `temperature_2m_max`, `temperature_2m_min` |
+| `temperature_2m` | `temperature_2m` | `temperature_2m_mean` |
 | `precipitation` | `precipitation` | `precipitation_sum` |
 | `relative_humidity_2m` | `relative_humidity_2m` | `relative_humidity_2m_mean` |
 | `wind_speed_10m` | `wind_speed_10m` | `wind_speed_10m_max` |
@@ -31,7 +31,7 @@ Unit parameter names also differ from each other:
 - `wind_speed_unit`: `kmh`, `ms`, `mph`, `kn`
 - Humidity has no unit parameter (always percent)
 
-**Comment to add in the mapper:** Explain why temperature daily uses two variables while humidity daily uses one. This is an API quirk, not a domain decision. The comment should make it clear to anyone reading the mapper that `mean_of_max_min` vs `mean` in `dailyAggregationByMetric` reflects this asymmetry, and that the mapper preserves it in `RepositoryWeatherPoint.payload`.
+**Comment to add in the mapper:** The mapper normalizes provider-specific field shapes into a scalar `RepositoryWeatherPoint.value`. It should not know about `DataKind`, fetch strategy, or current-time comparisons. If one endpoint ever needs multiple raw fields to produce the scalar, that normalization still belongs here, not in the domain model.
 
 ### Timezone handling
 
@@ -47,20 +47,20 @@ Rules:
 
 ### metricApiSpec mapper
 
-This is the infrastructure function that translates `{ metric, interval }` → `{ apiVariables: string[], requiresTimezone: boolean }`.
+This is the infrastructure function that translates `{ endpoint, metric, interval }` → `{ apiVariables: string[], requiresTimezone: boolean }`.
 
 ```
-metric: 'temperature_2m', interval: 'hourly'
+endpoint: 'forecast', metric: 'temperature_2m', interval: 'hourly'
   → { variables: ['temperature_2m'], requiresTimezone: false }
 
-metric: 'temperature_2m', interval: 'daily'
-  → { variables: ['temperature_2m_max', 'temperature_2m_min'], requiresTimezone: true }
+endpoint: 'forecast', metric: 'temperature_2m', interval: 'daily'
+  → { variables: ['temperature_2m_mean'], requiresTimezone: true }
 
-metric: 'relative_humidity_2m', interval: 'daily'
+endpoint: 'forecast', metric: 'relative_humidity_2m', interval: 'daily'
   → { variables: ['relative_humidity_2m_mean'], requiresTimezone: true }
 ```
 
-**Comment to add:** This function is the only place in the codebase that knows about Open-Meteo's variable naming conventions. If the API changes a variable name, this is the only place to update.
+**Comment to add:** This function is the only place in the codebase that knows about Open-Meteo's variable naming conventions. If different endpoints ever require different variable selections for the same domain metric, keep that asymmetry here instead of leaking it into the domain layer.
 
 ### Raw response shape
 
@@ -80,8 +80,7 @@ For daily:
 {
   "daily": {
     "time": ["2024-01-01", "2024-01-02"],
-    "temperature_2m_max": [8.1, 6.4],
-    "temperature_2m_min": [1.2, -0.3]
+    "temperature_2m_mean": [4.6, 3.05]
   }
 }
 ```
@@ -90,13 +89,11 @@ Important: these timestamps are expressed in the timezone requested from Open-Me
 
 The mapper zips `time[]` with value array(s) into `RepositoryWeatherPoint[]`.
 
-- Hourly metrics always produce `payload: { kind: 'scalar', value }`
-- Daily precipitation / humidity / wind also produce scalar payloads
-- Daily temperature produces `payload: { kind: 'min_max', min, max }`
+- Hourly metrics always produce one scalar `value`
+- Daily metrics for this challenge also produce one scalar `value` per timestamp
+- If an endpoint ever needs multiple raw fields to derive that scalar, the normalization stays in infrastructure before creating the repository point
 
-For temperature daily, the mapper preserves the raw max/min pair inside one repository point; the use case computes `(max + min) / 2` later.
-
-**Comment to add in mapper:** The mapper does not apply business logic. It transforms shape only, including timezone-aware timestamp parsing. The `(max + min) / 2` calculation happens in the use case, not here.
+**Comment to add in mapper:** The mapper applies provider-shape normalization only, including timezone-aware timestamp parsing. Domain decisions such as `DataKind` assignment stay in the use case.
 
 ---
 
@@ -171,14 +168,15 @@ function splitQueryByEndpoint(query: WeatherQuery, boundaryDate: Date) {
 
 **Comment to add:** The boundary day is intentionally owned by `forecast`. This prevents overlap because the API range parameters are day-based, not timestamp-based.
 
-**Daily aggregation logic:**
+**Daily value semantics:**
 
-After receiving raw readings from the repository, the use case applies the aggregation method from `dailyAggregationByMetric`:
+After receiving normalized readings from the repository, the use case carries the scalar values into final `WeatherReading` objects:
 
-- `mean_of_max_min`: receives one `RepositoryWeatherPoint` whose payload is `{ kind: 'min_max', min, max }`, produces one final `WeatherReading` with `(max + min) / 2`
-- `sum`, `mean`, `max`: receive one `RepositoryWeatherPoint` whose payload is `{ kind: 'scalar', value }`, and pass that scalar through into the final `WeatherReading`
+- `mean`: daily temperature and humidity values represent a daily mean
+- `sum`: daily precipitation values represent the accumulated daily total
+- `max`: daily wind values represent the daily maximum
 
-**Comment to add:** Explain that the use case is the only layer that knows about `dailyAggregationByMetric`. The repository produces `RepositoryWeatherPoint`; the component receives final `WeatherReading`. The transformation lives here by design.
+**Comment to add:** `dailyAggregationByMetric` encodes the semantic meaning of the scalar daily value. It drives reviewer-facing clarity and UI disclaimers, while provider-specific raw-field normalization stays in infrastructure.
 
 **DataKind assignment:**
 
@@ -279,7 +277,6 @@ The `WeatherDashboard` or `WeatherChart` component must display a disclaimer whe
 
 ```typescript
 const disclaimerByMethod: Record<DailyAggregationMethod, string> = {
-  mean_of_max_min: 'Daily values show the mean of max and min temperatures',
   sum:             'Daily values show the total accumulated amount',
   mean:            'Daily values show the daily mean',
   max:             'Daily values show the daily maximum',
@@ -309,7 +306,7 @@ Render as two series on the same axis (e.g. solid line for historical, dashed fo
 | `openmeteo/mapper` | Pure function | High — snapshot of raw response → RepositoryWeatherPoint[] |
 | `metricApiSpec` mapper | Pure function | High — verifies correct API variable names |
 | `GetWeatherSeriesUseCase` | Unit with mock repo | High — FetchStrategy, boundary split, aggregation, DataKind assignment |
-| `dailyAggregationByMetric` calculations | Pure logic | Medium |
+| `dailyAggregationByMetric` semantics | Pure logic | Medium |
 | `injectOrThrow` | Pure function | Low — simple guard |
 | Composables | Integration with Vue Test Utils | Low — covered implicitly by use case tests |
 | Components | Mount tests | Out of scope for this challenge |

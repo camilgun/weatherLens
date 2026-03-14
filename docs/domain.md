@@ -72,31 +72,20 @@ The date range is inclusive. `start` and `end` may refer to the same day, which 
 ### RepositoryWeatherPoint
 
 ```typescript
-type RepositoryWeatherPayload =
-  | {
-      readonly kind: 'scalar'
-      readonly value: number
-    }
-  | {
-      readonly kind: 'min_max'
-      readonly min: number
-      readonly max: number
-    }
-
 interface RepositoryWeatherPoint {
   readonly timestamp: Date
   readonly unit: WeatherUnit
   readonly aggregation: AggregationInterval
-  readonly payload: RepositoryWeatherPayload
+  readonly value: number
 }
 ```
 
 `RepositoryWeatherPoint` is the repository-to-use-case boundary type. It is still a domain type, but it is not the final UI-ready reading model.
 
 Purpose:
-- lets the repository preserve Open-Meteo's daily temperature asymmetry (`max` + `min`) without leaking raw API JSON upward
+- keeps endpoint-specific raw field shapes and naming quirks inside infrastructure
 - keeps `WeatherReading` clean and scalar for the chart and table
-- makes it explicit that daily aggregation is a use-case responsibility, not mapper logic
+- gives the use case a normalized boundary model that it can merge, sort, and classify without knowing provider details
 
 ### WeatherReading
 
@@ -149,10 +138,10 @@ Used by:
 ### dailyAggregationByMetric
 
 ```typescript
-type DailyAggregationMethod = 'mean_of_max_min' | 'sum' | 'mean' | 'max'
+type DailyAggregationMethod = 'sum' | 'mean' | 'max'
 
 const dailyAggregationByMetric: Record<WeatherMetric, DailyAggregationMethod> = {
-  temperature_2m:       'mean_of_max_min', // (max + min) / 2 — API does not provide mean
+  temperature_2m:       'mean',            // use the provider's native daily mean when available
   precipitation:        'sum',             // precipitation_sum
   relative_humidity_2m: 'mean',            // relative_humidity_2m_mean (available in API)
   wind_speed_10m:       'max',             // wind_speed_10m_max
@@ -160,10 +149,10 @@ const dailyAggregationByMetric: Record<WeatherMetric, DailyAggregationMethod> = 
 ```
 
 Used by:
-- `GetWeatherSeriesUseCase` to convert `RepositoryWeatherPoint` into final `WeatherReading` for daily interval
-- UI components to render the correct aggregation disclaimer (e.g. "Daily values represent mean of max/min temperatures")
+- `GetWeatherSeriesUseCase` to keep the semantic meaning of daily values explicit when converting `RepositoryWeatherPoint` into final `WeatherReading`
+- UI components to render the correct aggregation disclaimer (e.g. "Daily values represent the daily mean")
 
-**Important distinction:** `temperature_2m` daily is computed by the use case from a repository payload containing `max` and `min`. `relative_humidity_2m` daily is a direct scalar payload (`_mean` variable). The `DailyAggregationMethod` reflects the *semantic* meaning in both cases — the difference in payload shape is documented in IMPLEMENTATION_NOTES.md.
+**Important distinction:** For the selected metrics in this challenge, daily values enter the domain as scalar values. `dailyAggregationByMetric` describes what that scalar means (`mean`, `sum`, `max`). If a specific Open-Meteo endpoint ever needs extra raw fields to obtain that scalar, that normalization stays in the infrastructure layer rather than leaking into the domain model.
 
 ---
 
