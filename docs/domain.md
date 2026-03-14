@@ -17,8 +17,11 @@ interface Location {
   readonly latitude: number
   readonly longitude: number
   readonly country?: string
+  readonly timezone: string   // IANA timezone, e.g. "Europe/Rome"
 }
 ```
+
+`Location.timezone` is required because Open-Meteo timestamps must be interpreted in the selected location's timezone, not in the user's browser timezone. The use case also relies on it to distinguish historical vs forecast data correctly.
 
 ### WeatherMetric
 
@@ -182,9 +185,9 @@ The 92-day threshold is a named constant:
 const FORECAST_LOOKBACK_DAYS = 92
 ```
 
-`DataKind` for each reading is determined independently of the fetch strategy:
-- `timestamp < startOfToday` → `'historical'`
-- `timestamp >= startOfToday` → `'forecast'`
+`DataKind` for each reading is determined independently of the fetch strategy, using the selected location's timezone:
+- `hourly`: compare the reading instant against the current instant in the location timezone
+- `daily`: compare the reading's local calendar day against today's local calendar day in the location timezone
 
 This decoupling means the chart correctly labels data regardless of which endpoint it came from.
 
@@ -270,6 +273,7 @@ Validation rules:
 - `dateRange.end <= today + 16 days` (Open-Meteo forecast limit)
 - `unit` is in `allowedUnitsByMetric[metric]`
 - `location.latitude` and `location.longitude` are finite numbers in valid range
+- `location.timezone` is a non-empty IANA timezone string
 
 This function is a pure domain function — no async, no side effects. Fully unit testable in isolation.
 

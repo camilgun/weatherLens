@@ -56,11 +56,15 @@ Each entry records a decision, its rationale, the alternatives considered, and a
 
 ## ADR-005: DataKind is a domain concept, not an infrastructure detail
 
-**Decision:** `WeatherReading.kind: DataKind` ('historical' | 'forecast') is determined by comparing `timestamp` to `startOfToday`, regardless of which API endpoint the data came from.
+**Decision:** `WeatherReading.kind: DataKind` ('historical' | 'forecast') is determined from the selected location's timezone, not from the browser timezone and not from which API endpoint produced the reading.
 
-**Rationale:** The visual distinction between historical and forecast data is meaningful to the user and belongs in the domain model. Coupling it to which endpoint was called would leak infrastructure structure into the UI.
+**Rationale:** The visual distinction between historical and forecast data is meaningful to the user and belongs in the domain model. Coupling it to which endpoint was called would leak infrastructure structure into the UI, and using the browser timezone would mislabel data for locations outside the user's local timezone.
 
-**Rule:** `timestamp < startOfToday → 'historical'`, `timestamp >= startOfToday → 'forecast'`. Applied in the use case after merging results.
+**Rule:**
+- `hourly`: compare the reading instant against the current instant in the selected location's timezone
+- `daily`: compare the reading's local calendar day against today's local calendar day in the selected location's timezone
+
+This means an hourly reading from earlier today is still `'historical'`, while a daily bucket for today is treated as `'forecast'`.
 
 ---
 

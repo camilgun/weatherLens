@@ -33,12 +33,17 @@ Unit parameter names also differ from each other:
 
 **Comment to add in the mapper:** Explain why temperature daily uses two variables while humidity daily uses one. This is an API quirk, not a domain decision. The comment should make it clear to anyone reading the mapper that `mean_of_max_min` vs `mean` in `dailyAggregationByMetric` reflects this asymmetry, and that the mapper preserves it in `RepositoryWeatherPoint.payload`.
 
-### Daily requests require `timezone`
+### Timezone handling
 
-When `interval === 'daily'`, the API requires a `timezone` parameter. Without it, the response is ambiguous or may error.
+When `interval === 'daily'`, the API requires a `timezone` parameter. In this project, the repository should send `timezone` for **both** `daily` and `hourly` requests using `query.location.timezone`.
 
-- Use `'auto'` as the default (Open-Meteo will detect from coordinates)
-- **Comment to add:** Note that `timezone: 'auto'` is added automatically for daily requests and explain why (API requirement, not user input).
+Rules:
+- `Location.timezone` comes from the Geocoding API and is stored in the domain model
+- Weather requests pass `timezone: query.location.timezone`
+- Do not rely on the browser timezone
+- Avoid `timezone: 'auto'` in application code; an explicit timezone from the selected location is more deterministic and easier to test
+
+**Comment to add in the HTTP client:** `timezone` is always sent from `query.location.timezone`. Daily requests require it, and hourly requests also use it so returned timestamps stay aligned with the selected location instead of the browser environment.
 
 ### metricApiSpec mapper
 
@@ -81,6 +86,8 @@ For daily:
 }
 ```
 
+Important: these timestamps are expressed in the timezone requested from Open-Meteo. They must be parsed with the selected location's timezone, not with `new Date(rawString)` in the browser timezone.
+
 The mapper zips `time[]` with value array(s) into `RepositoryWeatherPoint[]`.
 
 - Hourly metrics always produce `payload: { kind: 'scalar', value }`
@@ -89,7 +96,7 @@ The mapper zips `time[]` with value array(s) into `RepositoryWeatherPoint[]`.
 
 For temperature daily, the mapper preserves the raw max/min pair inside one repository point; the use case computes `(max + min) / 2` later.
 
-**Comment to add in mapper:** The mapper does not apply business logic. It transforms shape only. The `(max + min) / 2` calculation happens in the use case, not here.
+**Comment to add in mapper:** The mapper does not apply business logic. It transforms shape only, including timezone-aware timestamp parsing. The `(max + min) / 2` calculation happens in the use case, not here.
 
 ---
 
@@ -120,14 +127,19 @@ After receiving raw readings from the repository, the use case applies the aggre
 
 **DataKind assignment:**
 
-After merging all readings (from one or two API calls), assign `kind`:
+After merging all readings (from one or two API calls), assign `kind` using the selected location's timezone:
 
 ```typescript
-const today = startOfToday()
-reading.kind = reading.timestamp < today ? 'historical' : 'forecast'
+if (query.interval === 'hourly') {
+  reading.kind = reading.timestamp < nowInLocation ? 'historical' : 'forecast'
+}
+
+if (query.interval === 'daily') {
+  reading.kind = readingLocalDay < todayLocalDay ? 'historical' : 'forecast'
+}
 ```
 
-**Comment to add:** `DataKind` is assigned here, after merging, so it reflects the user's temporal reality — not the API endpoint that served the data. A reading from `/forecast` with a past timestamp is still `'historical'`.
+**Comment to add:** `DataKind` is assigned here, after merging, so it reflects the user's temporal reality in the selected location — not the API endpoint that served the data and not the developer's browser timezone. A reading from `/forecast` with a past timestamp is still `'historical'`.
 
 ---
 

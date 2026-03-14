@@ -94,6 +94,7 @@ src/
 ```
 1. User fills WeatherConfig form
    → WeatherQuery domain entity assembled + validated
+   → selected Location already carries an IANA timezone
 
 2. useWeatherSeries composable (TanStack Query)
    → calls IGetWeatherSeriesUseCase.execute(query)
@@ -104,12 +105,14 @@ src/
    → merges RepositoryWeatherPoint[] if strategy is 'both'
    → converts points into final WeatherReading[]
    → applies daily aggregation logic if interval === 'daily'
+   → assigns DataKind using location-local time
    → returns Result<WeatherSeries, GetWeatherSeriesError>
 
 4. IWeatherRepository (OpenMeteoWeatherRepository)
    → builds API params from query (metric + interval → API variable names)
+   → always passes query.location.timezone to Open-Meteo
    → calls /forecast and/or /archive endpoint
-   → maps raw response to RepositoryWeatherPoint[]
+   → maps raw response to RepositoryWeatherPoint[] using the location timezone
    → returns Result<ReadonlyArray<RepositoryWeatherPoint>, WeatherRepositoryError>
 
 5. Composable unwraps Result
