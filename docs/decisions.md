@@ -56,9 +56,9 @@ Each entry records a decision, its rationale, the alternatives considered, and a
 
 ## ADR-005: DataKind is a domain concept, not an infrastructure detail
 
-**Decision:** `WeatherReading.kind: DataKind` ('historical' | 'forecast') is determined from the selected location's timezone, not from the browser timezone and not from which API endpoint produced the reading.
+**Decision:** `WeatherReading.kind: DataKind` ('historical' | 'forecast') is determined from the selected location's timezone, not from the browser timezone and not from which API endpoint produced the reading. The current instant/day used for this comparison comes from an injected time source, not from ambient global time.
 
-**Rationale:** The visual distinction between historical and forecast data is meaningful to the user and belongs in the domain model. Coupling it to which endpoint was called would leak infrastructure structure into the UI, and using the browser timezone would mislabel data for locations outside the user's local timezone.
+**Rationale:** The visual distinction between historical and forecast data is meaningful to the user and belongs in the domain model. Coupling it to which endpoint was called would leak infrastructure structure into the UI, and using the browser timezone would mislabel data for locations outside the user's local timezone. Injecting the time source also makes these rules deterministic in tests.
 
 **Rule:**
 - `hourly`: compare the reading instant against the current instant in the selected location's timezone
@@ -74,9 +74,9 @@ This means an hourly reading from earlier today is still `'historical'`, while a
 
 **Rationale:** The decision of which endpoint(s) to call is orchestration logic — it belongs in the use case. The repository's responsibility is to faithfully translate a query into an API call and map the response. Keeping the repository single-purpose makes it easier to test and reason about.
 
-**Boundary rule:** If the range spans the 92-day limit, the boundary day belongs entirely to the `forecast` endpoint. The `archive` subquery ends on the previous day. This keeps the split day-based, which matches Open-Meteo's `start_date` / `end_date` semantics, and avoids overlap.
+**Boundary rule:** The 92-day boundary is computed from the current local calendar day in the selected location timezone, using an injected time source. If the range spans that limit, the boundary day belongs entirely to the `forecast` endpoint and the `archive` subquery ends on the previous day. This keeps the split day-based, which matches Open-Meteo's `start_date` / `end_date` semantics, and avoids overlap.
 
-**Consequence:** `FetchStrategy` remains a use-case concern only. For a date range that spans the 92-day boundary, the use case performs two repository calls, one with `'archive'` and one with `'forecast'`, clips the subqueries so they do not overlap, then merges the resulting `RepositoryWeatherPoint` arrays, sorted by timestamp, before converting them into final `WeatherReading` values. A timestamp-level dedupe after merge is acceptable as a defensive safeguard.
+**Consequence:** `FetchStrategy` remains a use-case concern only. `archive_only` applies when `end < boundaryDay`; `forecast_only` applies when `start >= boundaryDay`; otherwise the use case performs two repository calls, one with `'archive'` and one with `'forecast'`, clips the subqueries so they do not overlap, then merges the resulting `RepositoryWeatherPoint` arrays, sorted by timestamp, before converting them into final `WeatherReading` values. A timestamp-level dedupe after merge is acceptable as a defensive safeguard.
 
 ---
 
@@ -105,3 +105,13 @@ This means an hourly reading from earlier today is still `'historical'`, while a
 **Decision:** `WeatherSeries.query` carries the full `WeatherQuery` that produced it.
 
 **Rationale:** UI components need context to render labels: the unit symbol, the metric name, the aggregation disclaimer. Without embedding the query, this context would need to be passed separately through props or stored in additional reactive state. Embedding it keeps the data self-describing.
+
+---
+
+## ADR-010: Inject a time source for all time-dependent rules
+
+**Decision:** Time-dependent use cases receive an `IClock` abstraction. Pure validation helpers receive `now: Date` explicitly as a parameter.
+
+**Rationale:** The project has multiple rules that depend on "today" or "now": the 92-day forecast/archive split, the 16-day forecast limit, and `DataKind` assignment. Reading ambient time directly from the runtime would couple those rules to the browser or CI environment and make timezone-sensitive tests brittle.
+
+**Trade-off:** This adds a small amount of plumbing in the composition root and constructor signatures. The benefit is that time semantics become explicit, deterministic, and reviewable.

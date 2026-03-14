@@ -25,6 +25,7 @@ No raw API response ever crosses the infrastructure boundary. Components only co
 src/
 ├── domain/
 │   ├── entities/               # Pure domain types — no imports from outside domain/
+│   ├── services/               # Domain-facing abstractions for cross-cutting concerns like time
 │   ├── repositories/           # Repository interfaces (contracts)
 │   └── usecases/               # Use case interfaces + concrete implementations
 │
@@ -32,6 +33,7 @@ src/
 │   ├── api/
 │   │   ├── openmeteo/          # HTTP client + raw response types + mappers
 │   │   └── geocoding/          # Open-Meteo Geocoding API client + mappers
+│   ├── time/                   # Concrete time source implementations
 │   └── repositories/           # Concrete implementations of domain repository interfaces
 │
 ├── composables/                # Vue boundary: inject use cases + wrap with TanStack Query
@@ -60,6 +62,7 @@ src/
 ### `domain/`
 - Zero external dependencies (no Vue, no axios, no option-t internals beyond types)
 - No `async` side effects — pure functions and type definitions only
+- Any use of "today" or "now" enters this layer either via a domain abstraction (`IClock`) or an explicit function argument
 - Everything else depends on this layer; this layer depends on nothing
 
 ### `infrastructure/`
@@ -101,6 +104,7 @@ src/
 
 3. GetWeatherSeriesUseCase
    → determines FetchStrategy from dateRange (see DOMAIN.md)
+   → asks IClock for the current instant and projects it into the selected location timezone
    → maps the strategy to one or two WeatherEndpoint calls
    → calls IWeatherRepository.fetchPoints(query, endpoint) once or twice
    → merges RepositoryWeatherPoint[] if strategy is 'both'
@@ -135,7 +139,8 @@ dependenciesPlugin
   → creates OpenMeteoApiClient
   → creates OpenMeteoWeatherRepository(apiClient)
   → creates OpenMeteoLocationRepository(apiClient)
-  → creates GetWeatherSeriesUseCase(weatherRepository)
+  → creates SystemClock
+  → creates GetWeatherSeriesUseCase(weatherRepository, clock)
   → creates SearchLocationsUseCase(locationRepository)
   → creates ConsoleErrorReporter
   → app.provide(WEATHER_USECASE_KEY, getWeatherSeriesUseCase)

@@ -42,6 +42,7 @@ Rules:
 - Weather requests pass `timezone: query.location.timezone`
 - Do not rely on the browser timezone
 - Avoid `timezone: 'auto'` in application code; an explicit timezone from the selected location is more deterministic and easier to test
+- Reuse the same location timezone when computing any rule that depends on "today" (92-day split, 16-day validation limit, `DataKind`)
 
 **Comment to add in the HTTP client:** `timezone` is always sent from `query.location.timezone`. Daily requests require it, and hourly requests also use it so returned timestamps stay aligned with the selected location instead of the browser environment.
 
@@ -104,14 +105,18 @@ The mapper zips `time[]` with value array(s) into `RepositoryWeatherPoint[]`.
 **FetchStrategy resolution:**
 
 ```typescript
-const boundaryDate = subDays(startOfToday(), FORECAST_LOOKBACK_DAYS) // 92 days
+const now = clock.now()
+const locationToday = getLocationToday(now, query.location.timezone)
+const boundaryDate = subDays(locationToday, FORECAST_LOOKBACK_DAYS) // 92 days
 
-if (query.dateRange.end <= boundaryDate)   → 'archive_only'
+if (query.dateRange.end < boundaryDate)    → 'archive_only'
 if (query.dateRange.start >= boundaryDate) → 'forecast_only'
 else                                       → 'both'
 ```
 
-**Comment to add:** `FORECAST_LOOKBACK_DAYS = 92` is a named constant because Open-Meteo's lookback window could change. It must not be a magic number.
+`getLocationToday(now, timezone)` is a helper that returns the current calendar day in the selected location timezone. It must not use the browser/developer-machine timezone implicitly.
+
+**Comment to add:** `FORECAST_LOOKBACK_DAYS = 92` is a named constant because Open-Meteo's lookback window could change. It must not be a magic number, and it must be applied relative to the selected location's current day.
 
 After resolving `FetchStrategy`, the use case maps it to one or two repository calls:
 
@@ -122,6 +127,8 @@ if (strategy === 'both')          call both and merge
 ```
 
 **Comment to add:** The repository does not know about `FetchStrategy`. It accepts exactly one endpoint per invocation. The use case owns the orchestration.
+
+**Validation note:** `validateWeatherQuery(query, now)` should reuse the same `getLocationToday(now, query.location.timezone)` helper to enforce the `today + 16 days` rule consistently with the fetch-boundary logic.
 
 ### Range splitting at the 92-day boundary
 
@@ -183,11 +190,15 @@ After receiving normalized readings from the repository, the use case carries th
 After merging all readings (from one or two API calls), assign `kind` using the selected location's timezone:
 
 ```typescript
+const now = clock.now()
+
 if (query.interval === 'hourly') {
+  const nowInLocation = toLocationInstant(now, query.location.timezone)
   reading.kind = reading.timestamp < nowInLocation ? 'historical' : 'forecast'
 }
 
 if (query.interval === 'daily') {
+  const todayLocalDay = getLocationToday(now, query.location.timezone)
   reading.kind = readingLocalDay < todayLocalDay ? 'historical' : 'forecast'
 }
 ```
@@ -318,4 +329,6 @@ Boundary-specific tests worth keeping:
 - query entirely from the boundary day onward → one `forecast` call
 - query spanning the boundary → two calls, clipped with no overlap
 - query ending exactly on `boundaryDate - 1 day` → archive only
+- query ending exactly on `boundaryDate` but starting before it → both
 - query starting exactly on `boundaryDate` → forecast only
+- same UTC instant with two different location timezones near midnight → potentially different `boundaryDate` and `todayLocalDay`

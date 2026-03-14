@@ -167,9 +167,10 @@ type WeatherEndpoint = 'forecast' | 'archive'
 
 Resolution rules (applied by the use case, not the repository):
 
-- `end <= today - 92 days` → `archive_only`
-- `start >= today - 92 days` → `forecast_only`
-- range spans the boundary → `both` (two API calls, results merged and sorted by timestamp)
+- derive `boundaryDay` from the current local calendar day in `query.location.timezone`, using an injected clock
+- `end < boundaryDay` → `archive_only`
+- `start >= boundaryDay` → `forecast_only`
+- otherwise → `both` (two API calls, results merged and sorted by timestamp)
 
 When the strategy is `both`, the use case must split the original query into two non-overlapping day-based subqueries because Open-Meteo filtering is date-based:
 
@@ -186,6 +187,8 @@ The 92-day threshold is a named constant:
 const FORECAST_LOOKBACK_DAYS = 92
 ```
 
+`today` in these rules always means "today in the selected location timezone", never "today in the browser or development machine timezone".
+
 `DataKind` for each reading is determined independently of the fetch strategy, using the selected location's timezone:
 - `hourly`: compare the reading instant against the current instant in the location timezone
 - `daily`: compare the reading's local calendar day against today's local calendar day in the location timezone
@@ -193,6 +196,18 @@ const FORECAST_LOOKBACK_DAYS = 92
 This decoupling means the chart correctly labels data regardless of which endpoint it came from.
 
 After fetching one or two endpoint results, the use case merges readings by timestamp, sorts ascending, and may deduplicate equal timestamps as a defensive safety net.
+
+---
+
+## Time Source
+
+```typescript
+interface IClock {
+  now(): Date
+}
+```
+
+Use cases that depend on "today" or "current instant" receive `IClock` from the composition root. Pure domain helpers such as `validateWeatherQuery()` accept `now: Date` explicitly instead of reading global time.
 
 ---
 
@@ -267,18 +282,19 @@ interface WeatherQueryValidationError {
 }
 
 function validateWeatherQuery(
-  query: WeatherQuery
+  query: WeatherQuery,
+  now: Date
 ): Result<WeatherQuery, WeatherQueryValidationError>
 ```
 
 Validation rules:
 - `dateRange.start <= dateRange.end`
-- `dateRange.end <= today + 16 days` (Open-Meteo forecast limit)
+- `dateRange.end <= locationToday(now, query.location.timezone) + 16 days` (Open-Meteo forecast limit, relative to the selected location's local day)
 - `unit` is in `allowedUnitsByMetric[metric]`
 - `location.latitude` and `location.longitude` are finite numbers in valid range
 - `location.timezone` is a non-empty IANA timezone string
 
-This function is a pure domain function — no async, no side effects. Fully unit testable in isolation.
+This function is a pure domain function — no async, no side effects, and no implicit reads from global time. Fully unit testable in isolation because the caller supplies `now` explicitly.
 
 ---
 
